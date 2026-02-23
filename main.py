@@ -1,46 +1,49 @@
-import asyncio
 import os
+import asyncio
 from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-from dotenv import load_dotenv
-import asyncpg
-
-load_dotenv()
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiohttp import web
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-DATABASE_URL = os.getenv("DATABASE_URL")
+WEBHOOK_PATH = "/webhook"
+WEBHOOK_SECRET = "supersecret"
+BASE_URL = os.getenv("RAILWAY_STATIC_URL")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# اتصال قاعدة البيانات
-async def create_pool():
-    return await asyncpg.create_pool(DATABASE_URL)
+@dp.message()
+async def echo(message: types.Message):
+    await message.answer("🚀 البوت يعمل على Railway بنظام Webhook")
 
-# قائمة رئيسية
-def main_menu():
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="⚡ إنشاء حساب Ichancy")],
-            [KeyboardButton(text="📥 شحن محفظة البوت"), KeyboardButton(text="📤 سحب من محفظة البوت")],
-            [KeyboardButton(text="👤 معلومات الملف الشخصي")]
-        ],
-        resize_keyboard=True
-    )
-    return keyboard
+async def on_startup(bot: Bot):
+    webhook_url = f"https://{BASE_URL}{WEBHOOK_PATH}"
+    await bot.set_webhook(webhook_url, secret_token=WEBHOOK_SECRET)
 
-@dp.message(Command("start"))
-async def start_handler(message: types.Message):
-    await message.answer(
-        "🔷 أهلاً بك في Idlib Ichancy Bot\n\nاختر من القائمة:",
-        reply_markup=main_menu()
-    )
+async def on_shutdown(bot: Bot):
+    await bot.delete_webhook()
 
 async def main():
-    pool = await create_pool()
-    dp["db"] = pool
-    await dp.start_polling(bot)
+    app = web.Application()
+
+    SimpleRequestHandler(
+        dispatcher=dp,
+        bot=bot,
+        secret_token=WEBHOOK_SECRET,
+    ).register(app, path=WEBHOOK_PATH)
+
+    setup_application(app, dp, bot=bot)
+
+    port = int(os.getenv("PORT", 8000))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+
+    await on_startup(bot)
+    await site.start()
+
+    while True:
+        await asyncio.sleep(3600)
 
 if __name__ == "__main__":
     asyncio.run(main())
